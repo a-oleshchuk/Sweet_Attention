@@ -9,9 +9,10 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
+from agents.shared.domain_config import DomainConfig
+
 from .config import SupportAgentSettings
 from .contracts import MessageHistoryEntry, WorkerInstruction
-from .domains import DomainConfig
 from .prompts import build_system_prompt
 from .repositories import CsvRepository, KnowledgeRepository
 from .state import SupportAgentState

@@ -5,9 +5,10 @@ from typing import Any
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from agents.shared.domain_config import DomainConfig, load_domain_registry
+
 from .config import SupportAgentSettings
 from .contracts import SupportTurnInput, SupportTurnOutput
-from .domains import DomainConfig, get_domain_config
 from .graph import build_support_agent_graph
 
 
@@ -29,7 +30,11 @@ class SupportAgentService:
     def from_env(cls, settings: SupportAgentSettings | None = None, model: Any | None = None) -> "SupportAgentService":
         resolved_settings = settings or SupportAgentSettings.from_env()
         resolved_settings.ensure_runtime_dirs()
-        domain_config = get_domain_config(resolved_settings.default_domain_key, resolved_settings.project_root)
+        registry = load_domain_registry(
+            project_root=resolved_settings.project_root,
+            config_path=resolved_settings.domain_config_path,
+        )
+        domain_config = registry.get(resolved_settings.default_domain_key)
         checkpoint_manager = SqliteSaver.from_conn_string(str(resolved_settings.checkpoint_path))
         checkpointer = checkpoint_manager.__enter__()
         graph = build_support_agent_graph(
