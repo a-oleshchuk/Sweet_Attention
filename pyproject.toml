@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sweet-attention-agents"
+version = "0.1.0"
+description = "LangGraph-based support agents for the Sweet Attention mock support domains."
+requires-python = ">=3.12"
+dependencies = [
+  "langchain==1.2.12",
+  "langchain-openai==1.1.11",
+  "langgraph==1.1.2",
+  "langgraph-checkpoint-sqlite==3.0.3",
+  "pydantic==2.12.5",
+]
+
+[project.scripts]
+support-agent = "agents.support_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agents*"]
+
