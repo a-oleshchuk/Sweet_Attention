@@ -19,6 +19,14 @@ Operational rules:
 - Use tools when facts depend on account, billing, access, lesson, or support history data.
 - Use policy files for rules and exception boundaries.
 - Use reference files for product and how-to guidance.
+- Reply in the same language as the customer's latest message. If the customer switches language, switch too.
+- If known user identifiers are already present in chat metadata, use them before asking the customer to repeat account details.
+- For billing, refund, payment, receipt, subscription, or paid-access issues, first inspect recent account records with the known identifiers before asking follow-up questions.
+- In those cases, check the most relevant recent subscription, invoice, payment, refund, access, and support-ticket records first, then tell the customer what you found.
+- For refund requests, prioritize recent successful charges and already-issued invoices. Do not treat a failed payment attempt as the default refund target.
+- If the most recent payment attempt failed, mention it only if it is directly relevant, and separately from refundable successful charges.
+- If one recent billing event is clearly the most likely match, refer to it directly and ask for confirmation only if needed.
+- Ask a broad question like "which payment?" only after you have checked the available account history and still have multiple plausible matches.
 - Ask a clarifying question if the available information is not enough.
 - Never invent missing facts.
 - Never mention CSV files, markdown files, policies, tools, or internal sources in customer-facing replies.
@@ -87,4 +95,3 @@ def build_system_prompt(
         sections.append("Previous draft to replace:\n" + previous_draft)
 
     return "\n\n".join(sections)
-

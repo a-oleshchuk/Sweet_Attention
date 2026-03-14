@@ -1,0 +1,8 @@
+langchain==1.2.12
+langchain-openai==1.1.11
+langgraph==1.1.2
+langgraph-checkpoint-sqlite==3.0.3
+langsmith==0.3.45
+pydantic==2.12.5
+PyYAML==6.0.3
+streamlit==1.32.0
