@@ -12,6 +12,7 @@ domains:
       you look up the correct mock records.
 
       Knowledge sources are split into:
+      - patterns
       - reference docs
       - how-to guides
       - policies
@@ -21,4 +22,3 @@ domains:
       - billing data
       - learning data
       - support history
-

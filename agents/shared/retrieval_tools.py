@@ -47,6 +47,30 @@ def build_read_reference_files_tool(repository: KnowledgeRepository, default_lim
     return read_reference_files
 
 
+def build_read_pattern_files_tool(repository: KnowledgeRepository, default_limit: int):
+    @tool
+    def read_pattern_files(query: str, limit: int = default_limit) -> str:
+        """Search common-case support patterns and return whole-file content for the best matches."""
+        results = repository.search(query, categories=["patterns"], limit=limit)
+        payload = {
+            "query": query,
+            "categories": ["patterns"],
+            "result_count": len(results),
+            "results": [
+                {
+                    "file_id": item.file_id,
+                    "category": item.category,
+                    "score": item.score,
+                    "content": item.content,
+                }
+                for item in results
+            ],
+        }
+        return json.dumps(payload)
+
+    return read_pattern_files
+
+
 def build_read_policy_files_tool(repository: KnowledgeRepository, default_limit: int):
     @tool
     def read_policy_files(query: str, limit: int = default_limit) -> str:
@@ -80,6 +104,7 @@ def build_retrieval_tools(
 ):
     return [
         build_query_data_records_tool(csv_repository, data_search_limit),
+        build_read_pattern_files_tool(knowledge_repository, knowledge_search_limit),
         build_read_reference_files_tool(knowledge_repository, knowledge_search_limit),
         build_read_policy_files_tool(knowledge_repository, knowledge_search_limit),
     ]

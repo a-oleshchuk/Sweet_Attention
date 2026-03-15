@@ -50,6 +50,8 @@ def _tooling_overview(csv_repository: CsvRepository, knowledge_repository: Knowl
     sections = [
         "Operational tables:",
         "\n".join(f"- {table_name}" for table_name in csv_repository.available_tables()),
+        "Pattern files:",
+        "\n".join(f"- {file_id}" for file_id in knowledge_repository.available_files(categories=["patterns"])),
         "Reference files:",
         "\n".join(
             f"- {file_id}"

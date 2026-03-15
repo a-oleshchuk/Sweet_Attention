@@ -1,7 +1,6 @@
 """Support-agent package."""
 
 from .contracts import SupportTurnInput, SupportTurnOutput, Tone, UserMetadata, WorkerInstruction
-from .service import SupportAgentService
 
 __all__ = [
     "SupportAgentService",
@@ -12,3 +11,10 @@ __all__ = [
     "WorkerInstruction",
 ]
 
+
+def __getattr__(name: str):
+    if name == "SupportAgentService":
+        from .service import SupportAgentService
+
+        return SupportAgentService
+    raise AttributeError(name)
