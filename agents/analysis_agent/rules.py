@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from agents.shared import AnalysisPolicy, CsvRepository, KnowledgeRepository
+from agents.shared.fraud_signals import detect_possible_user_fraud
 from agents.shared.repositories import normalize_text
 from agents.support_agent.contracts import Tone, WorkerInstruction
 
@@ -704,6 +705,7 @@ def evaluate_rules(
         }
 
     explicit_dissatisfaction = _contains_any(latest_user_message, policy.patterns.explicit_dissatisfaction_phrases)
+    fraud_risk = detect_possible_user_fraud(latest_user_message)
     repeated_complaints = _repeated_complaint_evidence(latest_user_message, policy)
     repeated_explanation_loop = _repeated_explanation_loop_evidence(dialogue)
     internal_details = _contains_any(latest_support_message, policy.patterns.internal_detail_patterns)
@@ -711,6 +713,15 @@ def evaluate_rules(
     rude_tone = _contains_any(latest_support_message, policy.patterns.rude_patterns)
     blaming_tone = _contains_any(latest_support_message, policy.patterns.blaming_patterns)
     unsupported_action = _contains_any(latest_support_message, policy.patterns.unsupported_action_patterns)
+
+    if fraud_risk:
+        reasons.append(
+            AnalysisReason(
+                code="potential_user_fraud_risk",
+                description="The user message may involve fraud, account takeover, or record tampering and requires worker review.",
+                evidence=fraud_risk,
+            )
+        )
 
     if explicit_dissatisfaction:
         reasons.append(
@@ -917,6 +928,8 @@ def derive_constraints(reason_codes: list[str]) -> list[str]:
 
     if {"explicit_user_dissatisfaction", "repeated_user_dissatisfaction"} & code_set:
         constraints.append("Acknowledge the frustration once and focus on the next concrete step.")
+    if {"potential_user_fraud_risk"} & code_set:
+        constraints.append("Do not help the user bypass verification, access another person's account, alter records, or abuse refunds.")
     if {"too_many_clarifying_questions", "too_many_total_turns"} & code_set:
         constraints.append("Do not repeat earlier guidance; keep the reply concise and move the case forward.")
     if {"factual_claim_without_tool_evidence", "independent_verification_failed"} & code_set:
@@ -945,6 +958,8 @@ def derive_next_steps(reason_codes: list[str], needs_escalation: bool) -> list[s
 
     if {"explicit_user_dissatisfaction", "repeated_user_dissatisfaction"} & code_set:
         steps.append("Send a revised reply that acknowledges the issue and corrects the support path.")
+    if {"potential_user_fraud_risk"} & code_set:
+        steps.append("Review the suspicious request for fraud or account-takeover risk before any reply is sent to the user.")
     if {"too_many_clarifying_questions", "too_many_total_turns"} & code_set:
         steps.append("Avoid another repetitive loop; either resolve the issue or ask one final focused question.")
     if {"factual_claim_without_tool_evidence", "independent_verification_failed"} & code_set:
@@ -983,7 +998,9 @@ def build_suggested_instruction(
 ) -> WorkerInstruction:
     code_set = set(reason_codes)
 
-    if "resolution_requires_worker_confirmation" in code_set:
+    if "potential_user_fraud_risk" in code_set:
+        task = "Review the suspicious request for possible fraud or account takeover and send only a safe approved reply."
+    elif "resolution_requires_worker_confirmation" in code_set:
         task = "Review the resolved dialogue and decide whether the case can be closed or needs one final reply."
     elif {"factual_claim_without_tool_evidence", "independent_verification_failed", "unsupported_policy_guidance"} & code_set:
         task = "Have the support agent send a revised reply based only on verified data and policy."

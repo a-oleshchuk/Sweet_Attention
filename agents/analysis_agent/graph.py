@@ -23,6 +23,7 @@ from .rules import (
 from .state import AnalysisAgentState
 
 _USER_SCOPED_REASON_CODES = {
+    "potential_user_fraud_risk",
     "explicit_user_dissatisfaction",
     "repeated_user_dissatisfaction",
     "too_many_clarifying_questions",

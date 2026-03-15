@@ -10,6 +10,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from agents.shared import CsvRepository, DomainConfig, KnowledgeRepository, build_retrieval_tools
+from agents.shared.fraud_signals import detect_possible_user_fraud
 from agents.shared.user_reply_safety import sanitize_user_reply
 
 from .config import SupportAgentSettings
@@ -124,6 +125,8 @@ def build_support_agent_graph(
         if incoming_user_message:
             active_user_issue = incoming_user_message
 
+        fraud_risk_signals = detect_possible_user_fraud(incoming_user_message or "")
+
         # Preserve prior lookup context when the worker asks for a revised reply
         # on the same issue. A worker instruction is not itself the user issue.
         last_tool_results = (
@@ -140,6 +143,7 @@ def build_support_agent_graph(
             "user_display_name": display_name,
             "known_user_identifiers": known_identifiers,
             "active_user_issue": active_user_issue,
+            "fraud_risk_signals": fraud_risk_signals,
             "open_worker_instruction": incoming_instruction or None,
             "pending_review": False,
             "draft_message": None,
@@ -216,7 +220,8 @@ def build_support_agent_graph(
         if state.get("open_worker_instruction"):
             instruction = WorkerInstruction.model_validate(state["open_worker_instruction"])
         review_before_send = bool(instruction.review_before_send) if instruction else False
-        send_target = "support_worker" if review_before_send else "user"
+        fraud_risk_review = bool(state.get("fraud_risk_signals"))
+        send_target = "support_worker" if review_before_send or fraud_risk_review else "user"
         assistant_text = _message_text(last_ai_message)
         if send_target == "user":
             assistant_text = sanitize_user_reply(assistant_text)
@@ -231,9 +236,10 @@ def build_support_agent_graph(
 
         updates: dict[str, Any] = {
             "assistant_message": assistant_text,
-            "draft_message": assistant_text if review_before_send else None,
-            "pending_review": review_before_send,
+            "draft_message": assistant_text if review_before_send or fraud_risk_review else None,
+            "pending_review": review_before_send or fraud_risk_review,
             "send_target": send_target,
+            "fraud_risk_signals": [],
             "open_worker_instruction": None,
             "incoming_user_message": None,
             "incoming_worker_instruction": None,
@@ -242,7 +248,7 @@ def build_support_agent_graph(
             "turn_messages": _clear_messages(list(state.get("turn_messages", []))),
         }
 
-        if review_before_send:
+        if review_before_send or fraud_risk_review:
             updates["previous_draft_message"] = assistant_text
         else:
             updates["conversation_messages"] = [last_ai_message]

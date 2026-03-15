@@ -16,6 +16,7 @@ class SupportAgentState(TypedDict, total=False):
     known_user_identifiers: dict[str, str]
     active_user_issue: str | None
     last_tool_results: list[dict[str, Any]]
+    fraud_risk_signals: list[str]
     open_worker_instruction: dict[str, Any] | None
     pending_review: bool
     draft_message: str | None
@@ -28,4 +29,3 @@ class SupportAgentState(TypedDict, total=False):
     incoming_user_message: str | None
     incoming_worker_instruction: dict[str, Any] | None
     incoming_user_metadata: dict[str, Any] | None
-
