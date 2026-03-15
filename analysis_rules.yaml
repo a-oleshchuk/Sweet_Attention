@@ -7,12 +7,12 @@ analysis:
     answer_format: "short clear reply to user"
   thresholds:
     escalate_after_support_replies_on_same_issue: 3
-    escalate_after_repeated_clarifying_questions: 4
-    escalate_after_total_turns_without_resolution: 10
+    escalate_after_repeated_clarifying_questions: 5
+    escalate_after_total_turns_without_resolution: 12
     watch_after_support_replies_on_same_issue: 2
-    watch_after_repeated_clarifying_questions: 2
-    watch_after_total_turns_without_resolution: 6
-    confusing_message_word_count: 180
+    watch_after_repeated_clarifying_questions: 3
+    watch_after_total_turns_without_resolution: 8
+    confusing_message_word_count: 220
   patterns:
     user_resolution_phrases:
       - "it works now"
@@ -68,13 +68,9 @@ analysis:
       - "i found"
       - "the record shows"
     policy_guidance_markers:
-      - "you can"
-      - "you cannot"
-      - "you can't"
       - "you must"
-      - "you need to"
-      - "eligible"
-      - "allowed"
+      - "eligible for"
+      - "allowed to"
       - "not allowed"
     sensitive_data_patterns:
       - "password"

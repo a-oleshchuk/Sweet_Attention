@@ -16,12 +16,12 @@ class DefaultInstructionPolicy(BaseModel):
 
 class ThresholdPolicy(BaseModel):
     escalate_after_support_replies_on_same_issue: int = 3
-    escalate_after_repeated_clarifying_questions: int = 4
-    escalate_after_total_turns_without_resolution: int = 10
+    escalate_after_repeated_clarifying_questions: int = 5
+    escalate_after_total_turns_without_resolution: int = 12
     watch_after_support_replies_on_same_issue: int = 2
-    watch_after_repeated_clarifying_questions: int = 2
-    watch_after_total_turns_without_resolution: int = 6
-    confusing_message_word_count: int = 180
+    watch_after_repeated_clarifying_questions: int = 3
+    watch_after_total_turns_without_resolution: int = 8
+    confusing_message_word_count: int = 220
 
 
 class PatternPolicy(BaseModel):
@@ -51,4 +51,3 @@ def load_analysis_policy(*, project_root: Path, config_path: Path | None = None)
     resolved_path = config_path or project_root / "analysis_rules.yaml"
     raw_payload = yaml.safe_load(resolved_path.read_text(encoding="utf-8")) or {}
     return AnalysisPolicy.model_validate(raw_payload.get("analysis", {}))
-

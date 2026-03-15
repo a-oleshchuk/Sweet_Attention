@@ -10,6 +10,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from agents.shared import CsvRepository, DomainConfig, KnowledgeRepository, build_retrieval_tools
+from agents.shared.user_reply_safety import sanitize_user_reply
 
 from .config import SupportAgentSettings
 from .contracts import MessageHistoryEntry, WorkerInstruction
@@ -113,10 +114,21 @@ def build_support_agent_graph(
             )
 
         active_user_issue = state.get("active_user_issue")
-        if incoming_instruction.get("task"):
-            active_user_issue = incoming_instruction["task"]
-        elif incoming_user_message:
+        if incoming_instruction and not incoming_user_message:
+            for entry in reversed(history):
+                if entry.get("role") == "user" and entry.get("content"):
+                    active_user_issue = str(entry["content"])
+                    break
+        if incoming_user_message:
             active_user_issue = incoming_user_message
+
+        # Preserve prior lookup context when the worker asks for a revised reply
+        # on the same issue. A worker instruction is not itself the user issue.
+        last_tool_results = (
+            list(state.get("last_tool_results", []))
+            if incoming_instruction and not incoming_user_message
+            else []
+        )
 
         previous_draft = state.get("draft_message") or state.get("previous_draft_message")
 
@@ -131,7 +143,7 @@ def build_support_agent_graph(
             "draft_message": None,
             "assistant_message": None,
             "send_target": None,
-            "last_tool_results": [],
+            "last_tool_results": last_tool_results,
             "previous_draft_message": previous_draft,
             "message_history": history,
             "conversation_messages": conversation_updates,
@@ -204,6 +216,8 @@ def build_support_agent_graph(
         review_before_send = bool(instruction.review_before_send) if instruction else False
         send_target = "support_worker" if review_before_send else "user"
         assistant_text = _message_text(last_ai_message)
+        if send_target == "user":
+            assistant_text = sanitize_user_reply(assistant_text)
         history = list(state.get("message_history", []))
         history.append(
             MessageHistoryEntry(

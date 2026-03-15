@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from agents.analysis_agent.contracts import AnalysisTurnInput, DialogueMessage, SupportAgentSnapshot, WorkerDecision
+from agents.shared.user_reply_safety import sanitize_user_reply
 from agents.analysis_agent.service import AnalysisAgentService
 from agents.support_agent.contracts import SupportTurnInput, UserMetadata, WorkerInstruction
 from agents.support_agent.service import SupportAgentService
@@ -11,6 +12,10 @@ from .store import ConversationRecord, ConversationStore
 class AppOrchestrator:
     def __init__(self, store: ConversationStore):
         self.store = store
+
+    @staticmethod
+    def _sanitize_user_message(message: str) -> str:
+        return sanitize_user_reply(message)
 
     def send_user_message(self, conversation_id: str, message: str) -> ConversationRecord:
         record = self.store.get(conversation_id)
@@ -27,7 +32,12 @@ class AppOrchestrator:
             )
 
         if support_output.send_target == "user":
-            record.messages.append(DialogueMessage(role="assistant", content=support_output.assistant_message))
+            record.messages.append(
+                DialogueMessage(
+                    role="assistant",
+                    content=self._sanitize_user_message(support_output.assistant_message),
+                )
+            )
         else:
             record.pending_review = support_output.pending_review
             record.pending_draft = support_output.draft_message or support_output.assistant_message
@@ -68,6 +78,9 @@ class AppOrchestrator:
                 )
             )
             record.analysis_result = analysis_output.model_dump(mode="json")
+            record.worker_package = (
+                analysis_output.worker_package.model_dump(mode="json") if analysis_output.worker_package else None
+            )
 
         record.worker_decisions.append(opened_decision.model_dump(mode="json"))
         record.worker_instruction_history.append(instruction.model_dump(mode="json"))
@@ -89,7 +102,12 @@ class AppOrchestrator:
             record.pending_draft = support_output.draft_message or support_output.assistant_message
             return self.store.save(record)
 
-        record.messages.append(DialogueMessage(role="assistant", content=support_output.assistant_message))
+        record.messages.append(
+            DialogueMessage(
+                role="assistant",
+                content=self._sanitize_user_message(support_output.assistant_message),
+            )
+        )
         record.pending_review = False
         record.pending_draft = None
         return self._resume_monitoring(
@@ -106,8 +124,9 @@ class AppOrchestrator:
         if not approved_draft:
             return record
 
-        record.pending_draft = approved_draft
-        record.messages.append(DialogueMessage(role="assistant", content=approved_draft))
+        sanitized_draft = self._sanitize_user_message(approved_draft)
+        record.pending_draft = sanitized_draft
+        record.messages.append(DialogueMessage(role="assistant", content=sanitized_draft))
         record.pending_review = False
         record.pending_draft = None
         return self._resume_monitoring(

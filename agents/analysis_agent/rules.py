@@ -5,10 +5,85 @@ from collections import Counter
 from typing import Any
 
 from agents.shared import AnalysisPolicy, CsvRepository, KnowledgeRepository
-from agents.shared.repositories import normalize_text, tokenize_text
+from agents.shared.repositories import normalize_text
 from agents.support_agent.contracts import Tone, WorkerInstruction
 
 from .contracts import AnalysisConversationStatus, AnalysisReason, DialogueMessage, SupportAgentSnapshot
+
+_POSITIVE_ACKNOWLEDGEMENT_MARKERS = (
+    "i see it",
+    "got it",
+    "that helps",
+    "makes sense",
+    "understood",
+    "thank you",
+    "thanks",
+)
+
+_REPEATED_COMPLAINT_CONTEXT_MARKERS = (
+    "can't",
+    "cannot",
+    "cant",
+    "unable",
+    "blocked",
+    "not working",
+    "not fixed",
+    "not resolved",
+    "still no",
+    "still can't",
+    "still cannot",
+    "still waiting",
+    "issue",
+    "problem",
+    "wrong",
+    "error",
+    "failed",
+    "fail",
+    "access",
+)
+
+_SENSITIVE_REQUEST_PATTERNS = (
+    r"\b(?:please\s+)?(?:share|provide|send|tell me|give me|reply with|type|enter|confirm)\b[^.!?\n]{{0,60}}\b{term}\b",
+    r"\b(?:what(?:'s| is)\s+your|may i have|can you share|could you share|can you provide|could you provide|please confirm)\b[^.!?\n]{{0,60}}\b{term}\b",
+)
+
+_SAFE_SENSITIVE_CONTEXT_MARKERS = (
+    "do not ask for",
+    "don't ask for",
+    "did not ask for",
+    "didn't ask for",
+    "will not ask for",
+    "won't ask for",
+    "never ask for",
+    "do not share",
+    "don't share",
+    "do not send",
+    "don't send",
+    "do not provide",
+    "don't provide",
+    "do not include",
+    "don't include",
+    "without sharing",
+    "without sending",
+)
+
+_POLICY_TOPIC_MARKERS = (
+    "policy",
+    "eligible",
+    "eligibility",
+    "refund",
+    "refundable",
+    "refunds",
+    "reimbursement",
+    "cancel",
+    "cancellation",
+    "subscription",
+    "reschedule",
+    "class credit",
+    "trial",
+    "teacher change",
+    "attendance policy",
+)
 
 
 def _contains_any(text: str, phrases: list[str]) -> list[str]:
@@ -35,9 +110,13 @@ def _word_count(text: str) -> int:
     return len(re.findall(r"\b\w+\b", text))
 
 
+def _sentence_chunks(text: str) -> list[str]:
+    return [chunk.strip() for chunk in re.split(r"(?<=[.!?])\s+|\n+", normalize_text(text)) if chunk.strip()]
+
+
 def _is_clarifying_question(text: str, policy: AnalysisPolicy) -> bool:
     normalized = normalize_text(text)
-    return "?" in normalized and bool(_contains_any(normalized, policy.patterns.clarifying_question_markers))
+    return bool(_contains_any(normalized, policy.patterns.clarifying_question_markers))
 
 
 def _has_factual_claim(text: str, policy: AnalysisPolicy) -> bool:
@@ -50,11 +129,62 @@ def _has_factual_claim(text: str, policy: AnalysisPolicy) -> bool:
 
 
 def _has_policy_guidance(text: str, policy: AnalysisPolicy) -> bool:
-    return bool(_contains_any(text, policy.patterns.policy_guidance_markers))
+    normalized = normalize_text(text)
+    markers = _contains_any(normalized, policy.patterns.policy_guidance_markers)
+    if not markers:
+        return False
+    strong_markers = {"eligible for", "allowed to", "not allowed"}
+    if strong_markers & set(markers):
+        return True
+    return any(topic in normalized for topic in _POLICY_TOPIC_MARKERS)
 
 
 def _is_account_specific_issue(text: str, policy: AnalysisPolicy) -> bool:
     return bool(_contains_any(text, policy.patterns.account_specific_issue_markers))
+
+
+def _is_positive_acknowledgement(text: str) -> bool:
+    normalized = normalize_text(text)
+    if not normalized or "?" in normalized:
+        return False
+    return any(marker in normalized for marker in _POSITIVE_ACKNOWLEDGEMENT_MARKERS)
+
+
+def _repeated_complaint_evidence(text: str, policy: AnalysisPolicy) -> list[str]:
+    normalized = normalize_text(text)
+    if _is_positive_acknowledgement(normalized):
+        return []
+    markers = _contains_any(normalized, policy.patterns.repeated_complaint_markers)
+    if not markers:
+        return []
+    if not any(marker in normalized for marker in _REPEATED_COMPLAINT_CONTEXT_MARKERS):
+        return []
+    return markers
+
+
+def _sensitive_request_evidence(text: str, policy: AnalysisPolicy) -> list[str]:
+    evidence: list[str] = []
+    for sentence in _sentence_chunks(text):
+        if any(marker in sentence for marker in _SAFE_SENSITIVE_CONTEXT_MARKERS):
+            continue
+        for term in policy.patterns.sensitive_data_patterns:
+            if term not in sentence:
+                continue
+            if any(re.search(pattern.format(term=re.escape(term)), sentence) for pattern in _SENSITIVE_REQUEST_PATTERNS):
+                evidence.append(term)
+    return list(dict.fromkeys(evidence))
+
+
+def _is_confusing_message(text: str, threshold: int) -> bool:
+    word_count = _word_count(text)
+    if word_count < threshold:
+        return False
+    sentence_count = max(len(re.findall(r"[.!?]", text)), 1)
+    average_sentence_length = word_count / sentence_count
+    structured = "\n-" in text or "\n1." in text or text.count("\n") >= 3
+    if structured and average_sentence_length < 30:
+        return False
+    return average_sentence_length >= 28
 
 
 def _support_tool_evidence(snapshot: SupportAgentSnapshot) -> tuple[bool, list[dict[str, Any]], list[str]]:
@@ -139,14 +269,6 @@ def _independent_verification(
     return evidence
 
 
-def _latest_support_mentions_keywords(latest_user_message: str, latest_support_message: str) -> bool:
-    user_tokens = [token for token in tokenize_text(latest_user_message) if len(token) > 3]
-    if not user_tokens:
-        return True
-    support_text = normalize_text(latest_support_message)
-    return any(token in support_text for token in user_tokens[:5])
-
-
 def evaluate_rules(
     *,
     dialogue: list[DialogueMessage],
@@ -160,14 +282,16 @@ def evaluate_rules(
     reasons: list[AnalysisReason] = []
     visible_messages = _visible_messages(dialogue)
     support_messages = _assistant_messages(dialogue)
+    user_messages = [message for message in visible_messages if message.role == "user"]
     latest_user = _latest_message(dialogue, "user")
     latest_support = _latest_message(dialogue, "assistant")
     latest_user_message = latest_user.content if latest_user else ""
     latest_support_message = latest_support.content if latest_support else ""
     support_reply_count = len(support_messages)
+    user_turn_count = len(user_messages)
     clarifying_question_count = sum(1 for message in support_messages if _is_clarifying_question(message.content, policy))
     total_turn_count = len(visible_messages)
-    explicit_resolution = _contains_any(latest_user_message, policy.patterns.user_resolution_phrases)
+    explicit_resolution = _contains_any(latest_user_message, policy.patterns.user_resolution_phrases) or _is_positive_acknowledgement(latest_user_message)
     factual_claim = _has_factual_claim(latest_support_message, policy)
     policy_guidance = _has_policy_guidance(latest_support_message, policy)
     support_has_evidence, support_evidence_records, support_queries = _support_tool_evidence(snapshot)
@@ -198,9 +322,9 @@ def evaluate_rules(
         }
 
     explicit_dissatisfaction = _contains_any(latest_user_message, policy.patterns.explicit_dissatisfaction_phrases)
-    repeated_complaints = _contains_any(latest_user_message, policy.patterns.repeated_complaint_markers)
+    repeated_complaints = _repeated_complaint_evidence(latest_user_message, policy)
     internal_details = _contains_any(latest_support_message, policy.patterns.internal_detail_patterns)
-    sensitive_request = _contains_any(latest_support_message, policy.patterns.sensitive_data_patterns)
+    sensitive_request = _sensitive_request_evidence(latest_support_message, policy)
     rude_tone = _contains_any(latest_support_message, policy.patterns.rude_patterns)
     blaming_tone = _contains_any(latest_support_message, policy.patterns.blaming_patterns)
     unsupported_action = _contains_any(latest_support_message, policy.patterns.unsupported_action_patterns)
@@ -222,16 +346,11 @@ def evaluate_rules(
             )
         )
 
-    if support_reply_count >= policy.thresholds.escalate_after_support_replies_on_same_issue:
-        reasons.append(
-            AnalysisReason(
-                code="too_many_support_replies",
-                description="The same issue has already received too many support replies.",
-                evidence=[f"support_reply_count={support_reply_count}"],
-            )
-        )
-
-    if clarifying_question_count >= policy.thresholds.escalate_after_repeated_clarifying_questions:
+    if (
+        clarifying_question_count >= policy.thresholds.escalate_after_repeated_clarifying_questions
+        and user_turn_count >= 2
+        and not support_has_evidence
+    ):
         reasons.append(
             AnalysisReason(
                 code="too_many_clarifying_questions",
@@ -240,7 +359,13 @@ def evaluate_rules(
             )
         )
 
-    if total_turn_count >= policy.thresholds.escalate_after_total_turns_without_resolution:
+    if (
+        total_turn_count >= policy.thresholds.escalate_after_total_turns_without_resolution
+        and user_turn_count >= 3
+        and support_reply_count >= 3
+        and not support_has_evidence
+        and (clarifying_question_count >= policy.thresholds.watch_after_repeated_clarifying_questions or bool(repeated_complaints) or bool(explicit_dissatisfaction))
+    ):
         reasons.append(
             AnalysisReason(
                 code="too_many_total_turns",
@@ -285,7 +410,7 @@ def evaluate_rules(
             )
         )
 
-    if _word_count(latest_support_message) >= policy.thresholds.confusing_message_word_count:
+    if _is_confusing_message(latest_support_message, policy.thresholds.confusing_message_word_count):
         reasons.append(
             AnalysisReason(
                 code="bad_tone_confusing",
@@ -345,7 +470,14 @@ def evaluate_rules(
         )
 
     account_specific_issue = _is_account_specific_issue(snapshot.active_user_issue or latest_user_message, policy)
-    if account_specific_issue and not support_has_evidence and not _is_clarifying_question(latest_support_message, policy):
+    if (
+        account_specific_issue
+        and not support_has_evidence
+        and not _is_clarifying_question(latest_support_message, policy)
+        and not factual_claim
+        and not unsupported_action
+        and not policy_guidance
+    ):
         reasons.append(
             AnalysisReason(
                 code="missing_clarification_or_lookup",
@@ -353,16 +485,6 @@ def evaluate_rules(
                 evidence=[snapshot.active_user_issue or latest_user_message],
             )
         )
-
-    if latest_user_message and latest_support_message and not _is_clarifying_question(latest_support_message, policy):
-        if not _latest_support_mentions_keywords(latest_user_message, latest_support_message):
-            reasons.append(
-                AnalysisReason(
-                    code="reply_did_not_address_user_issue",
-                    description="The support reply does not appear to address the user's stated issue directly.",
-                    evidence=[latest_user_message, latest_support_message],
-                )
-            )
 
     deduped: list[AnalysisReason] = []
     seen = set()
@@ -377,9 +499,8 @@ def evaluate_rules(
         needs_escalation = True
     else:
         watch_signals = [
-            support_reply_count >= policy.thresholds.watch_after_support_replies_on_same_issue,
-            clarifying_question_count >= policy.thresholds.watch_after_repeated_clarifying_questions,
-            total_turn_count >= policy.thresholds.watch_after_total_turns_without_resolution,
+            clarifying_question_count >= policy.thresholds.watch_after_repeated_clarifying_questions and user_turn_count >= 2 and not support_has_evidence,
+            total_turn_count >= policy.thresholds.watch_after_total_turns_without_resolution and user_turn_count >= 2 and support_reply_count >= 2,
             bool(repeated_complaints),
         ]
         status = AnalysisConversationStatus.WATCH if any(watch_signals) else AnalysisConversationStatus.NORMAL
@@ -389,6 +510,7 @@ def evaluate_rules(
         "current_reasons": [reason.model_dump() for reason in reasons],
         "needs_escalation": needs_escalation,
         "conversation_status": status.value,
+        "watch_recommended": any(watch_signals) if not reasons else False,
         "verification_evidence": verification_evidence,
         "last_user_message": latest_user_message,
         "last_support_message": latest_support_message,
@@ -399,7 +521,7 @@ def derive_recommended_tone(reason_codes: list[str], default_tone: Tone) -> Tone
     code_set = set(reason_codes)
     if {"explicit_user_dissatisfaction", "repeated_user_dissatisfaction", "bad_tone_rude", "bad_tone_blaming"} & code_set:
         return Tone.FRIENDLY_AND_CALM
-    if {"too_many_support_replies", "too_many_clarifying_questions", "too_many_total_turns"} & code_set:
+    if {"too_many_clarifying_questions", "too_many_total_turns"} & code_set:
         return Tone.SHORT_AND_NEUTRAL
     if code_set:
         return Tone.FORMAL
@@ -412,7 +534,7 @@ def derive_constraints(reason_codes: list[str]) -> list[str]:
 
     if {"explicit_user_dissatisfaction", "repeated_user_dissatisfaction"} & code_set:
         constraints.append("Acknowledge the frustration once and focus on the next concrete step.")
-    if {"too_many_support_replies", "too_many_clarifying_questions", "too_many_total_turns"} & code_set:
+    if {"too_many_clarifying_questions", "too_many_total_turns"} & code_set:
         constraints.append("Do not repeat earlier guidance; keep the reply concise and move the case forward.")
     if {"factual_claim_without_tool_evidence", "independent_verification_failed"} & code_set:
         constraints.append("Verify the factual answer against data before responding.")
@@ -426,9 +548,6 @@ def derive_constraints(reason_codes: list[str]) -> list[str]:
         constraints.append("Do not claim that actions were completed when no action was actually performed.")
     if {"missing_clarification_or_lookup"} & code_set:
         constraints.append("Ask one focused clarifying question if a lookup still cannot be performed safely.")
-    if {"reply_did_not_address_user_issue"} & code_set:
-        constraints.append("Address the user's actual request directly in the next reply.")
-
     if not constraints:
         constraints.append("Keep the reply simple, understandable, and focused on resolution.")
     return constraints
@@ -443,7 +562,7 @@ def derive_next_steps(reason_codes: list[str], needs_escalation: bool) -> list[s
 
     if {"explicit_user_dissatisfaction", "repeated_user_dissatisfaction"} & code_set:
         steps.append("Send a revised reply that acknowledges the issue and corrects the support path.")
-    if {"too_many_support_replies", "too_many_clarifying_questions", "too_many_total_turns"} & code_set:
+    if {"too_many_clarifying_questions", "too_many_total_turns"} & code_set:
         steps.append("Avoid another repetitive loop; either resolve the issue or ask one final focused question.")
     if {"factual_claim_without_tool_evidence", "independent_verification_failed"} & code_set:
         steps.append("Re-check the relevant data before sending another factual answer.")
@@ -451,7 +570,7 @@ def derive_next_steps(reason_codes: list[str], needs_escalation: bool) -> list[s
         steps.append("Verify the applicable policy before giving further instructions.")
     if {"unsafe_internal_details", "unsafe_sensitive_data_request", "unsupported_action_claim"} & code_set:
         steps.append("Replace the unsafe wording with a compliant customer-facing reply.")
-    if {"missing_clarification_or_lookup", "reply_did_not_address_user_issue"} & code_set:
+    if {"missing_clarification_or_lookup"} & code_set:
         steps.append("Refocus the next reply on the user's exact issue and collect only the minimum missing detail.")
     if {"resolution_requires_worker_confirmation"} & code_set:
         steps.append("Review the resolved conversation and confirm whether it can be closed.")
@@ -500,10 +619,10 @@ def build_suggested_instruction(
         task = "Have the support agent send a revised reply based only on verified data and policy."
     elif {"explicit_user_dissatisfaction", "repeated_user_dissatisfaction", "bad_tone_rude", "bad_tone_blaming"} & code_set:
         task = "Have the support agent send a calmer revised reply that corrects the tone and moves the issue forward."
-    elif {"too_many_support_replies", "too_many_clarifying_questions", "too_many_total_turns"} & code_set:
+    elif {"too_many_clarifying_questions", "too_many_total_turns"} & code_set:
         task = "Have the support agent send one concise reply that avoids repetition and moves toward resolution."
     else:
-        task = "Have the support agent send a corrected reply that addresses the user's issue directly."
+        task = "Have the support agent send a corrected reply."
 
     return WorkerInstruction(
         task=task,
@@ -535,11 +654,5 @@ def build_worker_package(
         "suggested_constraints": suggested_constraints,
         "suggested_worker_instruction": suggested_instruction.model_dump(),
     }
-
-
-def summarize_codes(reasons: list[dict[str, Any]]) -> list[str]:
-    return [str(reason["code"]) for reason in reasons]
-
-
 def build_reason_counter(reasons: list[dict[str, Any]]) -> dict[str, int]:
     return dict(Counter(reason["code"] for reason in reasons))

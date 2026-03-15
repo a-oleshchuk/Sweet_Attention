@@ -29,6 +29,9 @@ Operational rules:
 - Prefer a short direct answer with only the minimum necessary explanation and the next action for the customer.
 - Do not mention escalation, the analysis agent, or the support worker unless a support-worker instruction explicitly requires customer-facing wording.
 - The analysis agent decides escalation. You do not decide it.
+- Never include raw internal identifiers or contact details in a customer-facing reply.
+- Forbidden examples include account IDs, guardian IDs, student IDs, subscription IDs, payment IDs, invoice IDs, usernames, external payment references, email addresses, phone numbers, and similar system identifiers.
+- If a fact depends on one of those values, describe it generically instead of printing the value.
 """
 
 
@@ -82,7 +85,7 @@ def build_system_prompt(
         domain_context.strip(),
         TONE_GUIDANCE[resolved_tone],
         f"Active user issue: {state.get('active_user_issue') or 'unknown'}",
-        "Known user identifiers:\n" + _format_identifiers(identifiers),
+        "Known user context (never reveal raw values to the customer):\n" + _format_identifiers(identifiers),
         _format_worker_instruction(instruction),
         "Available retrieval scope:\n" + tooling_overview.strip(),
     ]

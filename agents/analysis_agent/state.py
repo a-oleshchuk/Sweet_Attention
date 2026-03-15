@@ -17,6 +17,7 @@ class AnalysisAgentState(TypedDict, total=False):
     incoming_worker_decision: dict[str, Any] | None
     worker_decision_applied: bool
     current_reasons: list[dict[str, Any]]
+    current_reason_events: list[dict[str, Any]]
     needs_escalation: bool
     paused: bool
     dialogue_summary: str
@@ -28,3 +29,5 @@ class AnalysisAgentState(TypedDict, total=False):
     verification_evidence: list[dict[str, Any]]
     last_user_message: str | None
     last_support_message: str | None
+    last_user_index: int | None
+    last_support_index: int | None

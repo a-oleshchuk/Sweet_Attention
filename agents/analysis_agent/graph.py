@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,9 +17,101 @@ from .rules import (
     derive_next_steps,
     derive_recommended_tone,
     evaluate_rules,
-    summarize_codes,
 )
 from .state import AnalysisAgentState
+
+_USER_SCOPED_REASON_CODES = {
+    "explicit_user_dissatisfaction",
+    "repeated_user_dissatisfaction",
+    "too_many_clarifying_questions",
+    "too_many_total_turns",
+    "missing_clarification_or_lookup",
+    "resolution_requires_worker_confirmation",
+}
+
+_ASSISTANT_SCOPED_REASON_CODES = {
+    "unsafe_internal_details",
+    "unsafe_sensitive_data_request",
+    "bad_tone_rude",
+    "bad_tone_blaming",
+    "bad_tone_confusing",
+    "unsupported_action_claim",
+    "factual_claim_without_tool_evidence",
+    "independent_verification_failed",
+    "unsupported_policy_guidance",
+}
+
+
+def _latest_message_position(dialogue: list[DialogueMessage], role: str) -> tuple[int | None, str]:
+    for index in range(len(dialogue) - 1, -1, -1):
+        if dialogue[index].role == role:
+            return index, dialogue[index].content
+    return None, ""
+
+
+def _message_hash(text: str) -> str:
+    return hashlib.sha1(text.strip().encode("utf-8")).hexdigest()
+
+
+def _reason_scope(reason_code: str) -> str:
+    if reason_code in _USER_SCOPED_REASON_CODES:
+        return "user"
+    if reason_code in _ASSISTANT_SCOPED_REASON_CODES:
+        return "assistant"
+    return "pair"
+
+
+def _build_reason_event(
+    *,
+    reason: AnalysisReason,
+    latest_user_index: int | None,
+    latest_support_index: int | None,
+    latest_user_message: str,
+    latest_support_message: str,
+) -> dict[str, Any]:
+    scope = _reason_scope(reason.code)
+    return {
+        "code": reason.code,
+        "description": reason.description,
+        "scope": scope,
+        "user_message_index": latest_user_index,
+        "assistant_message_index": latest_support_index,
+        "user_message_hash": _message_hash(latest_user_message) if latest_user_message else None,
+        "assistant_message_hash": _message_hash(latest_support_message) if latest_support_message else None,
+    }
+
+
+def _matches_reason_event(candidate: dict[str, Any], previous: dict[str, Any]) -> bool:
+    if candidate.get("code") != previous.get("code"):
+        return False
+    if candidate.get("scope") != previous.get("scope"):
+        return False
+
+    scope = str(candidate.get("scope"))
+    if scope == "user":
+        return (
+            candidate.get("user_message_index") == previous.get("user_message_index")
+            and candidate.get("user_message_hash") == previous.get("user_message_hash")
+        )
+    if scope == "assistant":
+        return (
+            candidate.get("assistant_message_index") == previous.get("assistant_message_index")
+            and candidate.get("assistant_message_hash") == previous.get("assistant_message_hash")
+        )
+    return (
+        candidate.get("user_message_index") == previous.get("user_message_index")
+        and candidate.get("assistant_message_index") == previous.get("assistant_message_index")
+        and candidate.get("user_message_hash") == previous.get("user_message_hash")
+        and candidate.get("assistant_message_hash") == previous.get("assistant_message_hash")
+    )
+
+
+def _reason_already_escalated(candidate: dict[str, Any], escalation_history: list[dict[str, Any]]) -> bool:
+    for entry in escalation_history:
+        for previous in entry.get("reasons", []):
+            if _matches_reason_event(candidate, previous):
+                return True
+    return False
 
 
 def build_analysis_agent_graph(
@@ -58,6 +151,7 @@ def build_analysis_agent_graph(
             "conversation_status": conversation_status,
             "worker_decision_applied": bool(incoming_worker_decision),
             "current_reasons": [],
+            "current_reason_events": [],
             "needs_escalation": False,
             "paused": False,
             "dialogue_summary": "",
@@ -69,6 +163,8 @@ def build_analysis_agent_graph(
             "verification_evidence": [],
             "last_user_message": None,
             "last_support_message": None,
+            "last_user_index": None,
+            "last_support_index": None,
             "incoming_full_dialogue_snapshot": None,
             "incoming_support_agent_state": None,
             "incoming_worker_decision": None,
@@ -88,6 +184,8 @@ def build_analysis_agent_graph(
 
     def evaluate(state: AnalysisAgentState) -> dict[str, Any]:
         dialogue = [DialogueMessage.model_validate(item) for item in state.get("full_dialogue_snapshot", [])]
+        latest_user_index, latest_user_message = _latest_message_position(dialogue, "user")
+        latest_support_index, latest_support_message = _latest_message_position(dialogue, "assistant")
         support_snapshot = SupportAgentSnapshot.model_validate(state.get("support_agent_state", {}))
         result = evaluate_rules(
             dialogue=dialogue,
@@ -98,12 +196,38 @@ def build_analysis_agent_graph(
             data_limit=data_search_limit,
             knowledge_limit=knowledge_search_limit,
         )
-        reasons = [AnalysisReason.model_validate(item) for item in result["current_reasons"]]
-        reason_codes = summarize_codes(result["current_reasons"])
-        conversation_status = AnalysisConversationStatus(result["conversation_status"])
+        candidate_reasons = [AnalysisReason.model_validate(item) for item in result["current_reasons"]]
+        escalation_history = list(state.get("escalation_history", []))
+        reasons: list[AnalysisReason] = []
+        reason_events: list[dict[str, Any]] = []
+        for reason in candidate_reasons:
+            event = _build_reason_event(
+                reason=reason,
+                latest_user_index=latest_user_index,
+                latest_support_index=latest_support_index,
+                latest_user_message=result["last_user_message"],
+                latest_support_message=result["last_support_message"],
+            )
+            if _reason_already_escalated(event, escalation_history):
+                continue
+            reasons.append(reason)
+            reason_events.append(event)
+
+        reason_codes = [reason.code for reason in reasons]
+        if reasons:
+            conversation_status = AnalysisConversationStatus(result["conversation_status"])
+            needs_escalation = True
+        elif result.get("needs_escalation"):
+            conversation_status = (
+                AnalysisConversationStatus.WATCH if result.get("watch_recommended") else AnalysisConversationStatus.NORMAL
+            )
+            needs_escalation = False
+        else:
+            conversation_status = AnalysisConversationStatus(result["conversation_status"])
+            needs_escalation = False
         recommended_tone = derive_recommended_tone(reason_codes, policy.default_output_tone)
         constraints = derive_constraints(reason_codes)
-        next_steps = derive_next_steps(reason_codes, result["needs_escalation"])
+        next_steps = derive_next_steps(reason_codes, needs_escalation)
         summary = build_dialogue_summary(
             snapshot=support_snapshot,
             latest_user_message=result["last_user_message"],
@@ -134,7 +258,8 @@ def build_analysis_agent_graph(
 
         return {
             "current_reasons": [reason.model_dump() for reason in reasons],
-            "needs_escalation": result["needs_escalation"],
+            "current_reason_events": reason_events,
+            "needs_escalation": needs_escalation,
             "conversation_status": conversation_status.value,
             "dialogue_summary": summary,
             "possible_next_steps": next_steps,
@@ -145,6 +270,8 @@ def build_analysis_agent_graph(
             "verification_evidence": result["verification_evidence"],
             "last_user_message": result["last_user_message"],
             "last_support_message": result["last_support_message"],
+            "last_user_index": latest_user_index,
+            "last_support_index": latest_support_index,
         }
 
     def finalize_paused(state: AnalysisAgentState) -> dict[str, Any]:
@@ -174,6 +301,9 @@ def build_analysis_agent_graph(
                 "verification_evidence": last_result.get("verification_evidence", []),
                 "last_user_message": latest_user,
                 "last_support_message": last_result.get("last_support_message"),
+                "current_reason_events": [],
+                "last_user_index": last_result.get("last_user_index"),
+                "last_support_index": last_result.get("last_support_index"),
             }
 
         if (
@@ -195,22 +325,28 @@ def build_analysis_agent_graph(
                 "verification_evidence": last_result.get("verification_evidence", []),
                 "last_user_message": latest_user,
                 "last_support_message": last_result.get("last_support_message"),
+                "current_reason_events": [],
+                "last_user_index": last_result.get("last_user_index"),
+                "last_support_index": last_result.get("last_support_index"),
             }
 
         return {
-            "current_reasons": last_result.get("current_reasons", []),
-            "needs_escalation": last_result.get("needs_escalation", False),
+            "current_reasons": [],
+            "current_reason_events": [],
+            "needs_escalation": False,
             "paused": True,
             "conversation_status": AnalysisConversationStatus.WORKER_REVIEWING.value,
-            "dialogue_summary": last_result.get("dialogue_summary", "The support worker is reviewing the escalated conversation."),
-            "possible_next_steps": last_result.get("possible_next_steps", []),
+            "dialogue_summary": "The support worker is reviewing the conversation under the latest worker instructions.",
+            "possible_next_steps": ["Wait for the revised support reply or the next worker decision."],
             "recommended_tone": last_result.get("recommended_tone", policy.default_output_tone.value),
-            "suggested_constraints": last_result.get("suggested_constraints", []),
-            "suggested_worker_instruction": last_result.get("suggested_worker_instruction"),
-            "worker_package": last_result.get("worker_package"),
+            "suggested_constraints": [],
+            "suggested_worker_instruction": None,
+            "worker_package": None,
             "verification_evidence": last_result.get("verification_evidence", []),
             "last_user_message": latest_user,
             "last_support_message": last_result.get("last_support_message"),
+            "last_user_index": last_result.get("last_user_index"),
+            "last_support_index": last_result.get("last_support_index"),
         }
 
     def finalize_turn(state: AnalysisAgentState) -> dict[str, Any]:
@@ -237,7 +373,9 @@ def build_analysis_agent_graph(
                 {
                     "timestamp": datetime.now(UTC).isoformat(),
                     "status": AnalysisConversationStatus.ESCALATED.value,
-                    "reasons": list(state.get("current_reasons", [])),
+                    "reasons": list(state.get("current_reason_events", [])),
+                    "user_message_index": state.get("last_user_index"),
+                    "assistant_message_index": state.get("last_support_index"),
                 }
             )
 
