@@ -123,15 +123,21 @@ def configure_page() -> None:
           color: var(--ink) !important;
         }
         .st-key-dialogues-create {
-          max-width: 340px;
-          width: min(340px, 100%);
-          margin-left: auto;
-          margin-right: auto;
-        }
+            max-width: 340px;
+            width: min(340px, 100%);
+            margin-left: auto;
+            margin-right: auto;
+          }
+          .st-key-dialogues-create .stMarkdown h2 {
+            text-align: center;
+            width: 100%;
+            margin-left: 0;
+            margin-right: 0;
+          }
         .st-key-conversation-list {
-          max-width: 390px;
-          width: min(390px, 100%);
-          margin-left: auto;
+            max-width: 390px;
+            width: min(390px, 100%);
+            margin-left: auto;
           margin-right: auto;
         }
         header[data-testid="stHeader"] {
@@ -238,15 +244,18 @@ def configure_page() -> None:
         .st-key-overview-card,
         .st-key-analysis-card,
         .st-key-worker-card,
+        .st-key-resolved-labeling-card,
         .st-key-dialogue-card {
-          background: #ffffff;
-          border: 1px solid var(--line);
-          border-radius: 22px;
+            background: #ffffff;
+            border: 1px solid var(--line);
+            border-radius: 22px;
           padding: 1.15rem 1.25rem;
           box-shadow: 0 10px 30px rgba(71, 55, 39, 0.06);
         }
         .st-key-overview-status-card,
         .st-key-overview-user-card,
+        .st-key-overview-category-card,
+        .st-key-overview-intent-card,
         .st-key-overview-summary-card,
         .st-key-worker-steps-card,
         .st-key-worker-tone-card,
@@ -259,10 +268,18 @@ def configure_page() -> None:
           padding: 1rem 1.1rem;
         }
         .st-key-overview-user-card p {
-          font-size: 0.95rem !important;
+            font-size: 0.95rem !important;
+        }
+        .st-key-overview-category-card p,
+        .st-key-overview-intent-card p {
+            font-size: 0.95rem !important;
         }
         .st-key-overview-user-card .stCaption {
-          font-size: 0.9rem !important;
+            font-size: 0.9rem !important;
+        }
+        .st-key-overview-category-card .stCaption,
+        .st-key-overview-intent-card .stCaption {
+            font-size: 0.9rem !important;
         }
         .st-key-dialogue-card [data-testid="stExpander"] {
           background: #fffdfa !important;

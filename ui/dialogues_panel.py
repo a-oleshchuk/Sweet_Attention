@@ -19,8 +19,7 @@ def _select_conversation(conversations: list[ConversationRecord]) -> Conversatio
         for record in conversations:
             label = (
                 f"{record.conversation_id}\n"
-                f"{record.user_display_name}\n"
-                f"{record.status.replace('_', ' ')}"
+                f"{record.user_display_name}"
             )
             button_type = "primary" if record.conversation_id == current else "secondary"
             if st.button(

@@ -20,6 +20,8 @@ class AnalysisAgentState(TypedDict, total=False):
     current_reason_events: list[dict[str, Any]]
     needs_escalation: bool
     paused: bool
+    dialogue_category: str
+    dialogue_intent: str
     dialogue_summary: str
     possible_next_steps: list[str]
     recommended_tone: str

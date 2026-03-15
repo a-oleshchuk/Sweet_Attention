@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agents.support_agent.contracts import Tone, ToolResultRecord, WorkerInstruction
 
@@ -68,6 +68,38 @@ class WorkerEscalationPackage(BaseModel):
     suggested_worker_instruction: WorkerInstruction
 
 
+CATEGORY_INTENT_OPTIONS = {
+    "billing": {
+        "duplicate_charge_or_refund_status",
+        "invoice_or_receipt_request",
+        "refund_status_or_request",
+        "failed_payment",
+    },
+    "access": {
+        "duplicate_profile_after_login",
+        "login_or_password_issue",
+        "paid_but_no_access",
+    },
+    "learning": {"lesson_or_attendance_issue"},
+    "subscription": {"subscription_change_request"},
+    "account": {"profile_update_or_identity_issue"},
+    "website": {"portal_navigation_or_display_issue"},
+    "general": {"general_support_request"},
+}
+
+
+class DialogueLabelChoice(BaseModel):
+    category: str
+    intent: str
+
+    @model_validator(mode="after")
+    def _validate_pair(self) -> "DialogueLabelChoice":
+        allowed = CATEGORY_INTENT_OPTIONS.get(self.category)
+        if not allowed or self.intent not in allowed:
+            raise ValueError("Invalid category and intent combination.")
+        return self
+
+
 class AnalysisTurnInput(BaseModel):
     conversation_id: str
     full_dialogue_snapshot: list[DialogueMessage]
@@ -89,6 +121,8 @@ class AnalysisTurnOutput(BaseModel):
     needs_escalation: bool
     paused: bool
     reasons: list[AnalysisReason] = Field(default_factory=list)
+    dialogue_category: str = ""
+    dialogue_intent: str = ""
     dialogue_summary: str
     possible_next_steps: list[str] = Field(default_factory=list)
     recommended_tone: Tone
@@ -104,6 +138,8 @@ class AnalysisTurnOutput(BaseModel):
             needs_escalation=bool(state.get("needs_escalation")),
             paused=bool(state.get("paused")),
             reasons=[AnalysisReason.model_validate(item) for item in state.get("current_reasons", [])],
+            dialogue_category=state.get("dialogue_category", ""),
+            dialogue_intent=state.get("dialogue_intent", ""),
             dialogue_summary=state.get("dialogue_summary", ""),
             possible_next_steps=list(state.get("possible_next_steps", [])),
             recommended_tone=Tone(state.get("recommended_tone", Tone.FORMAL.value)),
@@ -115,4 +151,3 @@ class AnalysisTurnOutput(BaseModel):
             if state.get("worker_package")
             else None,
         )
-

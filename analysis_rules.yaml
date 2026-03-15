@@ -37,6 +37,13 @@ analysis:
       - "same issue again"
       - "still not fixed"
       - "still not working"
+      - "still dont get"
+      - "still don't get"
+      - "not enough explanation"
+      - "don't understand"
+      - "dont understand"
+      - "that doesn't explain"
+      - "that doesnt explain"
     repeated_complaint_markers:
       - "still"
       - "again"

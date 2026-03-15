@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from agents.analysis_agent.contracts import AnalysisTurnInput, DialogueMessage, SupportAgentSnapshot, WorkerDecision
 from agents.shared.user_reply_safety import sanitize_user_reply
 from agents.analysis_agent.service import AnalysisAgentService
@@ -158,6 +160,25 @@ class AppOrchestrator:
         record.pending_review = False
         record.pending_draft = None
         record.worker_decisions.append(resolved_decision.model_dump(mode="json"))
+        return self.store.save(record)
+
+    def save_resolved_labeling(
+        self,
+        conversation_id: str,
+        *,
+        status: str,
+        category: str,
+        intent: str,
+        summary: str,
+    ) -> ConversationRecord:
+        record = self.store.get(conversation_id)
+        record.resolved_labeling = {
+            "status": status.strip(),
+            "category": category.strip(),
+            "intent": intent.strip(),
+            "summary": summary.strip(),
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
         return self.store.save(record)
 
     def _resume_monitoring(self, *, record: ConversationRecord, note: str) -> ConversationRecord:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+import re
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -25,6 +26,7 @@ class ConversationRecord(BaseModel):
     worker_package: dict | None = None
     pending_review: bool = False
     pending_draft: str | None = None
+    resolved_labeling: dict = Field(default_factory=dict)
     worker_instruction_history: list[dict] = Field(default_factory=list)
     worker_decisions: list[dict] = Field(default_factory=list)
 
@@ -35,6 +37,36 @@ class ConversationRecord(BaseModel):
     @property
     def last_summary(self) -> str:
         return str(self.analysis_result.get("dialogue_summary", ""))
+
+    @property
+    def dialogue_summary_text(self) -> str:
+        summary = self.last_summary
+        match = re.search(r"^Summary:\s*(.+)$", summary, flags=re.MULTILINE)
+        return match.group(1).strip() if match else summary
+
+    @property
+    def dialogue_category(self) -> str:
+        return str(self.analysis_result.get("dialogue_category", ""))
+
+    @property
+    def dialogue_intent(self) -> str:
+        return str(self.analysis_result.get("dialogue_intent", ""))
+
+    @property
+    def resolved_label_category(self) -> str:
+        return str(self.resolved_labeling.get("category", ""))
+
+    @property
+    def resolved_label_intent(self) -> str:
+        return str(self.resolved_labeling.get("intent", ""))
+
+    @property
+    def resolved_label_summary(self) -> str:
+        return str(self.resolved_labeling.get("summary", ""))
+
+    @property
+    def resolved_label_status(self) -> str:
+        return str(self.resolved_labeling.get("status", ""))
 
 
 class ConversationStore:
@@ -74,4 +106,3 @@ class ConversationStore:
             records.append(ConversationRecord.model_validate_json(path.read_text(encoding="utf-8")))
         records.sort(key=lambda item: item.updated_at, reverse=True)
         return records
-

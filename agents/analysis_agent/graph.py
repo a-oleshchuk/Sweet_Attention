@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -10,6 +11,7 @@ from agents.shared import AnalysisPolicy, CsvRepository, DomainConfig, Knowledge
 
 from .contracts import AnalysisConversationStatus, AnalysisReason, DialogueMessage, SupportAgentSnapshot, WorkerDecision
 from .rules import (
+    build_dialogue_profile,
     build_dialogue_summary,
     build_suggested_instruction,
     build_worker_package,
@@ -120,6 +122,7 @@ def build_analysis_agent_graph(
     policy: AnalysisPolicy,
     data_search_limit: int,
     knowledge_search_limit: int,
+    issue_classifier: Callable[[list[DialogueMessage], SupportAgentSnapshot, str, str], tuple[str, str]] | None = None,
     checkpointer: Any | None = None,
 ):
     csv_repository = CsvRepository(domain_config.data_root)
@@ -154,6 +157,8 @@ def build_analysis_agent_graph(
             "current_reason_events": [],
             "needs_escalation": False,
             "paused": False,
+            "dialogue_category": "",
+            "dialogue_intent": "",
             "dialogue_summary": "",
             "possible_next_steps": [],
             "recommended_tone": policy.default_output_tone.value,
@@ -228,12 +233,18 @@ def build_analysis_agent_graph(
         recommended_tone = derive_recommended_tone(reason_codes, policy.default_output_tone)
         constraints = derive_constraints(reason_codes)
         next_steps = derive_next_steps(reason_codes, needs_escalation)
-        summary = build_dialogue_summary(
+        dialogue_category, dialogue_intent, _ = build_dialogue_profile(
+            dialogue=dialogue,
             snapshot=support_snapshot,
             latest_user_message=result["last_user_message"],
-            latest_support_message=result["last_support_message"],
             status=conversation_status,
-            reasons=reasons,
+            classifier=issue_classifier,
+        )
+        summary = build_dialogue_summary(
+            dialogue=dialogue,
+            snapshot=support_snapshot,
+            latest_user_message=result["last_user_message"],
+            status=conversation_status,
         )
 
         suggested_instruction = None
@@ -261,6 +272,8 @@ def build_analysis_agent_graph(
             "current_reason_events": reason_events,
             "needs_escalation": needs_escalation,
             "conversation_status": conversation_status.value,
+            "dialogue_category": dialogue_category,
+            "dialogue_intent": dialogue_intent,
             "dialogue_summary": summary,
             "possible_next_steps": next_steps,
             "recommended_tone": recommended_tone.value,
@@ -292,6 +305,8 @@ def build_analysis_agent_graph(
                 "needs_escalation": False,
                 "paused": False,
                 "conversation_status": AnalysisConversationStatus.RESOLVED.value,
+                "dialogue_category": last_result.get("dialogue_category", ""),
+                "dialogue_intent": last_result.get("dialogue_intent", ""),
                 "dialogue_summary": summary,
                 "possible_next_steps": ["No further analysis action is required."],
                 "recommended_tone": last_result.get("recommended_tone", policy.default_output_tone.value),
@@ -316,6 +331,8 @@ def build_analysis_agent_graph(
                 "needs_escalation": False,
                 "paused": False,
                 "conversation_status": AnalysisConversationStatus.NORMAL.value,
+                "dialogue_category": last_result.get("dialogue_category", ""),
+                "dialogue_intent": last_result.get("dialogue_intent", ""),
                 "dialogue_summary": "Worker review is complete. Continue monitoring the next user turn.",
                 "possible_next_steps": ["Resume normal monitoring on the next user message."],
                 "recommended_tone": last_result.get("recommended_tone", policy.default_output_tone.value),
@@ -336,6 +353,8 @@ def build_analysis_agent_graph(
             "needs_escalation": False,
             "paused": True,
             "conversation_status": AnalysisConversationStatus.WORKER_REVIEWING.value,
+            "dialogue_category": last_result.get("dialogue_category", ""),
+            "dialogue_intent": last_result.get("dialogue_intent", ""),
             "dialogue_summary": "The support worker is reviewing the conversation under the latest worker instructions.",
             "possible_next_steps": ["Wait for the revised support reply or the next worker decision."],
             "recommended_tone": last_result.get("recommended_tone", policy.default_output_tone.value),
@@ -356,6 +375,8 @@ def build_analysis_agent_graph(
             "needs_escalation": state.get("needs_escalation", False),
             "paused": state.get("paused", False),
             "current_reasons": list(state.get("current_reasons", [])),
+            "dialogue_category": state.get("dialogue_category", ""),
+            "dialogue_intent": state.get("dialogue_intent", ""),
             "dialogue_summary": state.get("dialogue_summary", ""),
             "possible_next_steps": list(state.get("possible_next_steps", [])),
             "recommended_tone": state.get("recommended_tone", policy.default_output_tone.value),

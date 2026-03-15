@@ -91,6 +91,15 @@ def _instruction_defaults(record: ConversationRecord) -> dict:
     return defaults
 
 
+def _resolved_label_defaults(record: ConversationRecord) -> dict[str, str]:
+    return {
+        "status": record.resolved_label_status or record.status,
+        "category": record.resolved_label_category or record.dialogue_category,
+        "intent": record.resolved_label_intent or record.dialogue_intent,
+        "summary": record.resolved_label_summary or record.dialogue_summary_text,
+    }
+
+
 def _render_overview(record: ConversationRecord) -> None:
     with st.container(key="overview-card"):
         st.markdown("#### Conversation overview")
@@ -104,6 +113,15 @@ def _render_overview(record: ConversationRecord) -> None:
             with st.container(key="overview-status-card"):
                 st.caption("Status")
                 st.markdown(_render_status(record.status), unsafe_allow_html=True)
+        col3, col4 = st.columns(2)
+        with col3:
+            with st.container(key="overview-category-card"):
+                st.caption("Category")
+                st.write(record.dialogue_category or "Not set")
+        with col4:
+            with st.container(key="overview-intent-card"):
+                st.caption("Intent")
+                st.write(record.dialogue_intent or "Not set")
         with st.container(key="overview-summary-card"):
             st.caption("Summary")
             st.write(record.last_summary or "No analysis summary yet.")
@@ -264,6 +282,35 @@ def _render_draft_controls(orchestrator: AppOrchestrator, record: ConversationRe
         st.rerun()
 
 
+def _render_resolved_labeling_block(orchestrator: AppOrchestrator, record: ConversationRecord) -> None:
+    if record.status != "resolved":
+        return
+
+    defaults = _resolved_label_defaults(record)
+    with st.container(key="resolved-labeling-card"):
+        st.markdown("#### Labeling")
+        st.caption("Review the LLM labels and update them if needed before submitting.")
+        with st.form(f"resolved-labeling-{record.conversation_id}"):
+            status = st.text_input("Status", value=str(defaults["status"]))
+            category = st.text_input("Category", value=str(defaults["category"]))
+            intent = st.text_input("Intent", value=str(defaults["intent"]))
+            summary = st.text_area("Summary", value=str(defaults["summary"]), height=180)
+            submit_col, _ = st.columns([1, 3.5])
+            with submit_col:
+                submitted = st.form_submit_button("Submit", use_container_width=True)
+
+    if submitted:
+        updated = orchestrator.save_resolved_labeling(
+            record.conversation_id,
+            status=status,
+            category=category,
+            intent=intent,
+            summary=summary,
+        )
+        st.session_state["selected_conversation_id"] = updated.conversation_id
+        st.rerun()
+
+
 def render_support_worker_view(orchestrator: AppOrchestrator, record: ConversationRecord) -> None:
     _render_overview(record)
     _render_analysis_package(record)
@@ -276,3 +323,4 @@ def render_support_worker_view(orchestrator: AppOrchestrator, record: Conversati
 
     _render_worker_form(orchestrator, record)
     _render_draft_controls(orchestrator, record)
+    _render_resolved_labeling_block(orchestrator, record)

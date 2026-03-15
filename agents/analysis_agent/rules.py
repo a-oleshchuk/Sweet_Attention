@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Callable
 from typing import Any
 
 from agents.shared import AnalysisPolicy, CsvRepository, KnowledgeRepository
@@ -40,6 +41,13 @@ _REPEATED_COMPLAINT_CONTEXT_MARKERS = (
     "failed",
     "fail",
     "access",
+    "dont get",
+    "don't get",
+    "understand",
+    "explain",
+    "explanation",
+    "reason",
+    "why",
 )
 
 _SENSITIVE_REQUEST_PATTERNS = (
@@ -85,6 +93,123 @@ _POLICY_TOPIC_MARKERS = (
     "attendance policy",
 )
 
+_TRIVIAL_USER_FOLLOW_UPS = (
+    "that all for now",
+    "that's all for now",
+    "okay",
+    "ok",
+    "thanks",
+    "thank you",
+    "got it",
+    "i see",
+)
+
+_TRIVIAL_ASSISTANT_CLOSINGS = (
+    "you're welcome",
+    "you are welcome",
+    "glad it arrived",
+    "glad that helped",
+    "if you need anything else",
+    "have a great day",
+    "happy to help",
+)
+
+_ACTION_ACCEPTANCE_MARKERS = (
+    "yes",
+    "yeah",
+    "yep",
+    "sure",
+    "please do",
+    "do it",
+    "go ahead",
+    "send it",
+    "email it",
+    "do that",
+)
+
+_ACTION_OFFER_MARKERS = (
+    "would you like me to",
+    "if you'd like, i can",
+    "if you would like, i can",
+    "if you want, i can",
+    "do you want me to",
+    "which would you prefer",
+    "i can send",
+    "i can email",
+    "i can provide",
+    "i can run",
+)
+
+_ACTION_COMPLETION_MARKERS = (
+    "done",
+    "i've sent",
+    "i have sent",
+    "sent to",
+    "sent a",
+    "emailed",
+    "email has been sent",
+    "has been sent",
+    "processed and sent",
+    "completed",
+)
+
+_EXPLANATION_REQUEST_MARKERS = (
+    "why",
+    "reason",
+    "explain",
+    "explanation",
+    "what happened",
+    "what caused",
+    "how did",
+    "how could",
+)
+
+_EXPLANATION_STUCK_MARKERS = (
+    "still dont get",
+    "still don't get",
+    "dont get",
+    "don't get",
+    "dont understand",
+    "don't understand",
+    "not enough explanation",
+    "not clear",
+    "unclear",
+    "but i didnt",
+    "but i didn't",
+)
+
+_EXPLANATION_STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "to",
+    "of",
+    "for",
+    "in",
+    "on",
+    "my",
+    "your",
+    "there",
+    "were",
+    "was",
+    "is",
+    "are",
+    "do",
+    "did",
+    "why",
+    "what",
+    "how",
+    "reason",
+    "reasons",
+    "explain",
+    "explanation",
+    "still",
+    "dont",
+    "don't",
+    "get",
+    "understand",
+}
+
 
 def _contains_any(text: str, phrases: list[str]) -> list[str]:
     normalized = normalize_text(text)
@@ -93,6 +218,13 @@ def _contains_any(text: str, phrases: list[str]) -> list[str]:
 
 def _latest_message(dialogue: list[DialogueMessage], role: str) -> DialogueMessage | None:
     for message in reversed(dialogue):
+        if message.role == role:
+            return message
+    return None
+
+
+def _first_message(dialogue: list[DialogueMessage], role: str) -> DialogueMessage | None:
+    for message in dialogue:
         if message.role == role:
             return message
     return None
@@ -112,6 +244,83 @@ def _word_count(text: str) -> int:
 
 def _sentence_chunks(text: str) -> list[str]:
     return [chunk.strip() for chunk in re.split(r"(?<=[.!?])\s+|\n+", normalize_text(text)) if chunk.strip()]
+
+
+def _compact_text(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def _truncate_words(text: str, limit: int) -> str:
+    words = _compact_text(text).split()
+    if len(words) <= limit:
+        return " ".join(words)
+    return " ".join(words[:limit]).rstrip(".,;:") + "..."
+
+
+def _summary_fragment(text: str, limit: int = 18) -> str:
+    compact = _compact_text(text)
+    if not compact:
+        return ""
+    sentence = re.split(r"(?<=[.!?])\s+", compact, maxsplit=1)[0]
+    return _truncate_words(sentence, limit).rstrip(" .")
+
+
+def _narrative_fragment(text: str, limit: int) -> str:
+    compact = _compact_text(text)
+    if not compact:
+        return ""
+    return _truncate_words(compact, limit).rstrip(" .")
+
+
+def _strip_leading_greeting(text: str) -> str:
+    compact = _compact_text(text)
+    return re.sub(r"^(hi|hello|hey)\s+[a-z0-9 .'-]+[-,:]\s*", "", compact, flags=re.IGNORECASE)
+
+
+def _user_summary_fragment(text: str, limit: int) -> str:
+    normalized = normalize_text(text)
+    if any(
+        marker in normalized
+        for marker in ("charged twice", "double charge", "duplicate charge", "two successful payments", "two payments")
+    ):
+        if any(marker in normalized for marker in ("reversed", "reversal", "refund", "refunded")):
+            return "a possible duplicate renewal charge and whether one payment would be reversed"
+        return "why two payments were recorded for the same renewal"
+    if any(marker in normalized for marker in ("receipt", "invoice", "reimbursement")):
+        return "how to get the invoice or payment receipt"
+    if any(marker in normalized for marker in ("duplicate profile", "see mia twice", "see twice", "profile twice")):
+        return "a duplicate student profile shown in the account"
+    if any(marker in normalized for marker in ("password", "sign in", "login", "log in", "reset my password")):
+        return "a sign-in or password issue"
+    if any(marker in normalized for marker in ("why", "reason", "explain", "explanation")) and any(
+        marker in normalized for marker in ("two payments", "two charges", "two successful payments", "duplicate charge")
+    ):
+        return "why two payments were created"
+    return _narrative_fragment(text, limit)
+
+
+def _assistant_summary_fragment(text: str, limit: int) -> str:
+    normalized = normalize_text(text)
+    compact = _strip_leading_greeting(text)
+    if ("refund" in normalized or "refunded" in normalized) and ("charge" in normalized or "duplicate" in normalized):
+        return "a duplicate charge was refunded"
+    if any(marker in normalized for marker in ("two successful charges", "two successful payments")) and any(
+        marker in normalized for marker in ("confirmed", "can confirm", "recorded", "processed")
+    ):
+        return "two successful payments were confirmed"
+    if any(marker in normalized for marker in ("common reasons", "possible reasons", "could be", "may have", "might have")):
+        return "there were several possible causes, but no definitive cause yet"
+    if any(marker in normalized for marker in ("investigate", "pull the gateway logs", "pull the logs", "provider logs")):
+        return "they offered a deeper investigation"
+    return _narrative_fragment(compact, limit)
+
+
+def _topic_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"\b[a-z0-9']+\b", normalize_text(text))
+        if len(token) > 2 and token not in _EXPLANATION_STOPWORDS
+    }
 
 
 def _is_clarifying_question(text: str, policy: AnalysisPolicy) -> bool:
@@ -150,6 +359,56 @@ def _is_positive_acknowledgement(text: str) -> bool:
     return any(marker in normalized for marker in _POSITIVE_ACKNOWLEDGEMENT_MARKERS)
 
 
+def _is_trivial_user_follow_up(text: str) -> bool:
+    normalized = normalize_text(text)
+    return not normalized or _is_positive_acknowledgement(text) or normalized in _TRIVIAL_USER_FOLLOW_UPS
+
+
+def _is_trivial_assistant_closing(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(marker in normalized for marker in _TRIVIAL_ASSISTANT_CLOSINGS)
+
+
+def _is_action_acceptance(text: str) -> bool:
+    normalized = normalize_text(text)
+    if not normalized or "?" in normalized:
+        return False
+    if any(marker in normalized for marker in _REPEATED_COMPLAINT_CONTEXT_MARKERS):
+        return False
+    words = re.findall(r"\b[a-z0-9']+\b", normalized)
+    return len(words) <= 6 and any(marker in normalized for marker in _ACTION_ACCEPTANCE_MARKERS)
+
+
+def _is_action_offer(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(marker in normalized for marker in _ACTION_OFFER_MARKERS)
+
+
+def _is_action_completed_reply(text: str) -> bool:
+    normalized = normalize_text(text)
+    if any(marker in normalized for marker in _ACTION_COMPLETION_MARKERS):
+        return True
+    return ("sent" in normalized or "emailed" in normalized) and any(
+        marker in normalized for marker in ("confirmation", "receipt", "invoice", "email")
+    )
+
+
+def _is_follow_through_resolved(dialogue: list[DialogueMessage]) -> bool:
+    visible = _visible_messages(dialogue)
+    if len(visible) < 3:
+        return False
+    latest = visible[-1]
+    accepted = visible[-2]
+    offered = visible[-3]
+    if latest.role != "assistant" or accepted.role != "user" or offered.role != "assistant":
+        return False
+    return (
+        _is_action_offer(offered.content)
+        and _is_action_acceptance(accepted.content)
+        and _is_action_completed_reply(latest.content)
+    )
+
+
 def _repeated_complaint_evidence(text: str, policy: AnalysisPolicy) -> list[str]:
     normalized = normalize_text(text)
     if _is_positive_acknowledgement(normalized):
@@ -160,6 +419,41 @@ def _repeated_complaint_evidence(text: str, policy: AnalysisPolicy) -> list[str]
     if not any(marker in normalized for marker in _REPEATED_COMPLAINT_CONTEXT_MARKERS):
         return []
     return markers
+
+
+def _is_explanation_request(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(marker in normalized for marker in _EXPLANATION_REQUEST_MARKERS)
+
+
+def _repeated_explanation_loop_evidence(dialogue: list[DialogueMessage]) -> list[str]:
+    user_messages = [message.content for message in dialogue if message.role == "user" and message.content.strip()]
+    if len(user_messages) < 3:
+        return []
+
+    latest = normalize_text(user_messages[-1])
+    latest_tokens = _topic_tokens(user_messages[-1])
+    if not latest_tokens:
+        return []
+
+    latest_shows_stuck = _is_explanation_request(latest) or any(marker in latest for marker in _EXPLANATION_STUCK_MARKERS)
+    if not latest_shows_stuck:
+        return []
+
+    repeated_requests: list[str] = []
+    for message in user_messages[:-1]:
+        normalized = normalize_text(message)
+        if not _is_explanation_request(normalized):
+            continue
+        overlap = latest_tokens & _topic_tokens(message)
+        if overlap:
+            repeated_requests.append(message)
+
+    if len(repeated_requests) < 2:
+        return []
+
+    evidence = repeated_requests[-2:] + [user_messages[-1]]
+    return [_summary_fragment(item, limit=16) for item in evidence]
 
 
 def _sensitive_request_evidence(text: str, policy: AnalysisPolicy) -> list[str]:
@@ -185,6 +479,93 @@ def _is_confusing_message(text: str, threshold: int) -> bool:
     if structured and average_sentence_length < 30:
         return False
     return average_sentence_length >= 28
+
+
+def classify_dialogue_issue(
+    *,
+    dialogue: list[DialogueMessage],
+    snapshot: SupportAgentSnapshot,
+    latest_user_message: str,
+    dialogue_summary: str,
+    classifier: Callable[[list[DialogueMessage], SupportAgentSnapshot, str, str], tuple[str, str]] | None = None,
+) -> tuple[str, str]:
+    primary_issue = snapshot.active_user_issue or latest_user_message
+    if classifier is None:
+        return "general", "general_support_request"
+    return classifier(
+        list(dialogue),
+        snapshot,
+        primary_issue or latest_user_message or "",
+        dialogue_summary,
+    )
+
+
+def _dialogue_summary_text(dialogue: list[DialogueMessage], primary_issue: str, status: AnalysisConversationStatus) -> str:
+    del status
+
+    visible_messages = [message for message in dialogue if message.role in {"user", "assistant"} and message.content.strip()]
+    user_messages = [message.content for message in visible_messages if message.role == "user"]
+    assistant_messages = [message.content for message in visible_messages if message.role == "assistant"]
+
+    primary_user = next((message for message in user_messages if not _is_trivial_user_follow_up(message)), primary_issue)
+    primary_assistant = next((message for message in assistant_messages if not _is_trivial_assistant_closing(message)), "")
+
+    latest_user_follow_up = next(
+        (
+            message
+            for message in reversed(user_messages)
+            if not _is_trivial_user_follow_up(message) and normalize_text(message) != normalize_text(primary_user)
+        ),
+        "",
+    )
+    latest_assistant = next(
+        (
+            message
+            for message in reversed(assistant_messages)
+            if not _is_trivial_assistant_closing(message) and normalize_text(message) != normalize_text(primary_assistant)
+        ),
+        "",
+    )
+    latest_visible = visible_messages[-1] if visible_messages else None
+
+    parts: list[str] = []
+    if primary_user:
+        parts.append(f"User asked: {_user_summary_fragment(primary_user, 18)}.")
+    if primary_assistant:
+        parts.append(f"Agent answered: {_assistant_summary_fragment(primary_assistant, 16)}.")
+    if latest_visible and latest_visible.role == "user" and latest_user_follow_up:
+        parts.append(f"Open question: {_user_summary_fragment(latest_user_follow_up, 14)}.")
+    else:
+        if latest_user_follow_up:
+            parts.append(f"User later asked: {_user_summary_fragment(latest_user_follow_up, 14)}.")
+        if latest_assistant:
+            parts.append(f"Agent later answered: {_assistant_summary_fragment(latest_assistant, 14)}.")
+
+    summary = " ".join(parts).strip()
+    if summary:
+        return summary
+    return "User asked for help and the dialogue needs review."
+
+
+def build_dialogue_profile(
+    *,
+    dialogue: list[DialogueMessage],
+    snapshot: SupportAgentSnapshot,
+    latest_user_message: str,
+    status: AnalysisConversationStatus,
+    classifier: Callable[[list[DialogueMessage], SupportAgentSnapshot, str, str], tuple[str, str]] | None = None,
+) -> tuple[str, str, str]:
+    first_user = _first_message(dialogue, "user")
+    primary_issue = snapshot.active_user_issue or (first_user.content if first_user else "") or latest_user_message or "Unknown issue"
+    summary = _dialogue_summary_text(dialogue, primary_issue, status)
+    category, intent = classify_dialogue_issue(
+        dialogue=dialogue,
+        snapshot=snapshot,
+        latest_user_message=latest_user_message,
+        dialogue_summary=summary,
+        classifier=classifier,
+    )
+    return category, intent, summary
 
 
 def _support_tool_evidence(snapshot: SupportAgentSnapshot) -> tuple[bool, list[dict[str, Any]], list[str]]:
@@ -292,19 +673,20 @@ def evaluate_rules(
     clarifying_question_count = sum(1 for message in support_messages if _is_clarifying_question(message.content, policy))
     total_turn_count = len(visible_messages)
     explicit_resolution = _contains_any(latest_user_message, policy.patterns.user_resolution_phrases) or _is_positive_acknowledgement(latest_user_message)
+    follow_through_resolution = _is_follow_through_resolved(dialogue)
     factual_claim = _has_factual_claim(latest_support_message, policy)
     policy_guidance = _has_policy_guidance(latest_support_message, policy)
     support_has_evidence, support_evidence_records, support_queries = _support_tool_evidence(snapshot)
     verification_evidence = list(support_evidence_records)
     independent_evidence: list[dict[str, Any]] = []
 
-    if explicit_resolution:
+    if explicit_resolution or follow_through_resolution:
         if policy.require_worker_confirmation_on_resolution:
             reasons.append(
                 AnalysisReason(
                     code="resolution_requires_worker_confirmation",
                     description="The user confirmed the issue is solved, but worker confirmation is required by policy.",
-                    evidence=[latest_user_message],
+                    evidence=[latest_user_message or latest_support_message],
                 )
             )
             status = AnalysisConversationStatus.WAITING_FOR_WORKER
@@ -323,6 +705,7 @@ def evaluate_rules(
 
     explicit_dissatisfaction = _contains_any(latest_user_message, policy.patterns.explicit_dissatisfaction_phrases)
     repeated_complaints = _repeated_complaint_evidence(latest_user_message, policy)
+    repeated_explanation_loop = _repeated_explanation_loop_evidence(dialogue)
     internal_details = _contains_any(latest_support_message, policy.patterns.internal_detail_patterns)
     sensitive_request = _sensitive_request_evidence(latest_support_message, policy)
     rude_tone = _contains_any(latest_support_message, policy.patterns.rude_patterns)
@@ -337,12 +720,12 @@ def evaluate_rules(
                 evidence=[latest_user_message],
             )
         )
-    elif repeated_complaints and support_reply_count >= 2:
+    elif (repeated_complaints or repeated_explanation_loop) and support_reply_count >= 2:
         reasons.append(
             AnalysisReason(
                 code="repeated_user_dissatisfaction",
-                description="The user repeated the same complaint after multiple support replies.",
-                evidence=[latest_user_message],
+                description="The user repeated the same complaint or question after multiple support replies.",
+                evidence=repeated_explanation_loop or [latest_user_message],
             )
         )
 
@@ -580,27 +963,14 @@ def derive_next_steps(reason_codes: list[str], needs_escalation: bool) -> list[s
 
 def build_dialogue_summary(
     *,
+    dialogue: list[DialogueMessage],
     snapshot: SupportAgentSnapshot,
     latest_user_message: str,
-    latest_support_message: str,
     status: AnalysisConversationStatus,
-    reasons: list[AnalysisReason],
 ) -> str:
-    active_issue = snapshot.active_user_issue or latest_user_message or "Unknown issue"
-    parts = [f"Active issue: {active_issue}."]
-    if latest_user_message:
-        parts.append(f"Latest user message: {latest_user_message}")
-    if latest_support_message:
-        parts.append(f"Latest support reply: {latest_support_message}")
-    if reasons:
-        parts.append(
-            "Escalation reasons: "
-            + "; ".join(f"{reason.code} ({reason.description})" for reason in reasons)
-            + "."
-        )
-    else:
-        parts.append(f"No escalation trigger matched. Current status: {status.value}.")
-    return " ".join(parts)
+    first_user = _first_message(dialogue, "user")
+    primary_issue = snapshot.active_user_issue or (first_user.content if first_user else "") or latest_user_message or "Unknown issue"
+    return _dialogue_summary_text(dialogue, primary_issue, status)
 
 
 def build_suggested_instruction(
