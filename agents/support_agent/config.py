@@ -5,6 +5,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from agents.shared import load_project_env
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,6 +23,7 @@ class SupportAgentSettings(BaseModel):
 
     @classmethod
     def from_env(cls) -> "SupportAgentSettings":
+        load_project_env(PROJECT_ROOT)
         checkpoint = os.getenv("SUPPORT_AGENT_CHECKPOINTER")
         domain_config = os.getenv("SUPPORT_AGENT_DOMAIN_CONFIG")
         return cls(

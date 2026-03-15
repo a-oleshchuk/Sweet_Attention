@@ -1,0 +1,138 @@
+analysis:
+  require_worker_confirmation_on_resolution: false
+  default_output_tone: "formal"
+  default_instruction:
+    review_before_send: true
+    regenerate: true
+    answer_format: "short clear reply to user"
+  thresholds:
+    escalate_after_support_replies_on_same_issue: 3
+    escalate_after_repeated_clarifying_questions: 4
+    escalate_after_total_turns_without_resolution: 10
+    watch_after_support_replies_on_same_issue: 2
+    watch_after_repeated_clarifying_questions: 2
+    watch_after_total_turns_without_resolution: 6
+    confusing_message_word_count: 180
+  patterns:
+    user_resolution_phrases:
+      - "it works now"
+      - "that worked"
+      - "issue resolved"
+      - "resolved now"
+      - "fixed now"
+      - "it is fixed"
+      - "problem solved"
+      - "thanks, it works"
+      - "thank you, it works"
+    explicit_dissatisfaction_phrases:
+      - "this is useless"
+      - "you did not help"
+      - "you didn't help"
+      - "not helpful"
+      - "i am unhappy"
+      - "i'm unhappy"
+      - "i am not happy"
+      - "i'm not happy"
+      - "this is unacceptable"
+      - "same issue again"
+      - "still not fixed"
+      - "still not working"
+    repeated_complaint_markers:
+      - "still"
+      - "again"
+      - "same issue"
+      - "not fixed"
+      - "not working"
+      - "this keeps happening"
+    clarifying_question_markers:
+      - "could you share"
+      - "can you share"
+      - "please share"
+      - "please confirm"
+      - "may i have"
+      - "can you provide"
+      - "could you provide"
+      - "what is your"
+      - "which student"
+      - "which invoice"
+      - "what email"
+    factual_claim_markers:
+      - "i checked"
+      - "i can confirm"
+      - "i confirmed"
+      - "your account"
+      - "your subscription"
+      - "your invoice"
+      - "your payment"
+      - "your access"
+      - "i found"
+      - "the record shows"
+    policy_guidance_markers:
+      - "you can"
+      - "you cannot"
+      - "you can't"
+      - "you must"
+      - "you need to"
+      - "eligible"
+      - "allowed"
+      - "not allowed"
+    sensitive_data_patterns:
+      - "password"
+      - "passcode"
+      - "cvv"
+      - "security code"
+      - "full card number"
+      - "bank login"
+      - "ssn"
+      - "social security"
+    internal_detail_patterns:
+      - "csv"
+      - "markdown"
+      - "readme"
+      - "policy file"
+      - "internal tool"
+      - "analysis agent"
+      - "support worker"
+      - "database"
+      - "system prompt"
+      - "internal system"
+    rude_patterns:
+      - "calm down"
+      - "obviously"
+      - "as i said"
+      - "read carefully"
+    blaming_patterns:
+      - "your fault"
+      - "you caused"
+      - "because you failed"
+      - "you should have known"
+      - "you should have done"
+    unsupported_action_patterns:
+      - "i restored"
+      - "we restored"
+      - "i updated"
+      - "we updated"
+      - "i changed"
+      - "we changed"
+      - "i refunded"
+      - "we refunded"
+      - "i resent"
+      - "we resent"
+      - "i escalated"
+      - "we escalated"
+      - "i created"
+      - "we created"
+      - "i unlocked"
+      - "we unlocked"
+    account_specific_issue_markers:
+      - "invoice"
+      - "payment"
+      - "refund"
+      - "subscription"
+      - "access"
+      - "login"
+      - "password"
+      - "lesson"
+      - "attendance"
+      - "account"
+      - "billing"

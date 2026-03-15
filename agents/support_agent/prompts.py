@@ -23,6 +23,10 @@ Operational rules:
 - Never invent missing facts.
 - Never mention CSV files, markdown files, policies, tools, or internal sources in customer-facing replies.
 - Keep replies simple and understandable.
+- Return only the final customer-facing reply text.
+- Do not reveal reasoning, investigation steps, evidence lists, internal notes, or source summaries.
+- Do not use headings such as "What I found", "What this means", or "Next steps" unless a support-worker instruction explicitly requires that format.
+- Prefer a short direct answer with only the minimum necessary explanation and the next action for the customer.
 - Do not mention escalation, the analysis agent, or the support worker unless a support-worker instruction explicitly requires customer-facing wording.
 - The analysis agent decides escalation. You do not decide it.
 """
@@ -87,4 +91,3 @@ def build_system_prompt(
         sections.append("Previous draft to replace:\n" + previous_draft)
 
     return "\n\n".join(sections)
-

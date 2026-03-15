@@ -1,5 +1,7 @@
 __pycache__/
 *.py[cod]
 .langgraph/
+.app_state/
+.env
 ai_school/
 scripts/

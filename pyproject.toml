@@ -14,10 +14,13 @@ dependencies = [
   "langgraph-checkpoint-sqlite==3.0.3",
   "pydantic==2.12.5",
   "PyYAML==6.0.3",
+  "python-dotenv>=1,<2",
+  "streamlit>=1.40,<2",
 ]
 
 [project.scripts]
 support-agent = "agents.support_agent.cli:main"
+analysis-agent = "agents.analysis_agent.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["agents*"]
+include = ["agents*", "app_core*", "ui*"]

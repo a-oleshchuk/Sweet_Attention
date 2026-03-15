@@ -9,14 +9,12 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from agents.shared.domain_config import DomainConfig
+from agents.shared import CsvRepository, DomainConfig, KnowledgeRepository, build_retrieval_tools
 
 from .config import SupportAgentSettings
 from .contracts import MessageHistoryEntry, WorkerInstruction
 from .prompts import build_system_prompt
-from .repositories import CsvRepository, KnowledgeRepository
 from .state import SupportAgentState
-from .tools import build_support_tools
 
 
 def _message_text(message: AIMessage | HumanMessage | ToolMessage) -> str:
@@ -71,7 +69,7 @@ def build_support_agent_graph(
 ):
     csv_repository = CsvRepository(domain_config.data_root)
     knowledge_repository = KnowledgeRepository(domain_config.knowledge_root)
-    tools = build_support_tools(
+    tools = build_retrieval_tools(
         csv_repository=csv_repository,
         knowledge_repository=knowledge_repository,
         data_search_limit=settings.data_search_limit,
